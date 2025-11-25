@@ -1,5 +1,19 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 
+// Tabella utenti
+export const users = sqliteTable('users', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  email: text('email').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  name: text('name'),
+  emailVerified: integer('email_verified', { mode: 'boolean' }).default(false),
+  verificationToken: text('verification_token'),
+  verificationExpires: integer('verification_expires', { mode: 'timestamp' }),
+  resetToken: text('reset_token'),
+  resetExpires: integer('reset_expires', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
+});
+
 // Categorie predefinite
 export const DEFAULT_CATEGORIES = [
   { id: 'streaming', name: 'Streaming', icon: '📺', color: '#E50914' },
@@ -32,6 +46,7 @@ export const categories = sqliteTable('categories', {
 // Tabella subscription
 export const subscriptions = sqliteTable('subscriptions', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text('user_id').notNull().references(() => users.id),
   name: text('name').notNull(),
   description: text('description'),
   categoryId: text('category_id').references(() => categories.id),
@@ -83,6 +98,8 @@ export const alternatives = sqliteTable('alternatives', {
 });
 
 // Types per TypeScript
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
 export type Category = typeof categories.$inferSelect;
 export type NewCategory = typeof categories.$inferInsert;
 export type Subscription = typeof subscriptions.$inferSelect;

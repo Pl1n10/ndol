@@ -31,6 +31,19 @@ export async function initializeDatabase() {
   
   // Crea le tabelle se non esistono
   sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      name TEXT,
+      email_verified INTEGER DEFAULT 0,
+      verification_token TEXT,
+      verification_expires INTEGER,
+      reset_token TEXT,
+      reset_expires INTEGER,
+      created_at INTEGER
+    );
+
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -38,28 +51,6 @@ export async function initializeDatabase() {
       color TEXT NOT NULL,
       is_custom INTEGER DEFAULT 0,
       created_at INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS subscriptions (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      category_id TEXT REFERENCES categories(id),
-      amount REAL NOT NULL,
-      currency TEXT DEFAULT 'EUR',
-      billing_cycle TEXT NOT NULL,
-      start_date INTEGER NOT NULL,
-      next_renewal INTEGER NOT NULL,
-      end_date INTEGER,
-      reminder_days_before INTEGER DEFAULT 7,
-      reminder_sent INTEGER DEFAULT 0,
-      provider TEXT,
-      website TEXT,
-      notes TEXT,
-      status TEXT DEFAULT 'active',
-      auto_renew INTEGER DEFAULT 1,
-      created_at INTEGER,
-      updated_at INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -78,6 +69,109 @@ export async function initializeDatabase() {
       created_at INTEGER
     );
   `);
+
+  // Gestione migrazione: verifica se la tabella subscriptions ha user_id
+  const tableInfo = sqlite.prepare("PRAGMA table_info(subscriptions)").all() as any[];
+  const hasUserId = tableInfo.some((col: any) => col.name === 'user_id');
+
+  if (!hasUserId) {
+    console.log('📦 Migrazione database: aggiunta colonna user_id...');
+    
+    // Crea nuova tabella con user_id
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS subscriptions_new (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        description TEXT,
+        category_id TEXT REFERENCES categories(id),
+        amount REAL NOT NULL,
+        currency TEXT DEFAULT 'EUR',
+        billing_cycle TEXT NOT NULL,
+        start_date INTEGER NOT NULL,
+        next_renewal INTEGER NOT NULL,
+        end_date INTEGER,
+        reminder_days_before INTEGER DEFAULT 7,
+        reminder_sent INTEGER DEFAULT 0,
+        provider TEXT,
+        website TEXT,
+        notes TEXT,
+        status TEXT DEFAULT 'active',
+        auto_renew INTEGER DEFAULT 1,
+        created_at INTEGER,
+        updated_at INTEGER
+      );
+    `);
+    
+    // Se esiste la vecchia tabella, elimina i dati (senza utente non sono recuperabili)
+    try {
+      const oldSubs = sqlite.prepare("SELECT COUNT(*) as count FROM subscriptions").get() as any;
+      if (oldSubs?.count > 0) {
+        console.log('⚠️ Eliminazione vecchie subscriptions senza utente associato...');
+      }
+      sqlite.exec('DROP TABLE IF EXISTS subscriptions');
+    } catch {
+      // Tabella non esiste, ok
+    }
+    
+    sqlite.exec('ALTER TABLE subscriptions_new RENAME TO subscriptions');
+    console.log('✅ Migrazione completata');
+  } else {
+    // Tabella già con user_id, crea solo se non esiste
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        description TEXT,
+        category_id TEXT REFERENCES categories(id),
+        amount REAL NOT NULL,
+        currency TEXT DEFAULT 'EUR',
+        billing_cycle TEXT NOT NULL,
+        start_date INTEGER NOT NULL,
+        next_renewal INTEGER NOT NULL,
+        end_date INTEGER,
+        reminder_days_before INTEGER DEFAULT 7,
+        reminder_sent INTEGER DEFAULT 0,
+        provider TEXT,
+        website TEXT,
+        notes TEXT,
+        status TEXT DEFAULT 'active',
+        auto_renew INTEGER DEFAULT 1,
+        created_at INTEGER,
+        updated_at INTEGER
+      );
+    `);
+  }
+
+  // Migrazione: aggiungi campi verifica email se non esistono
+  const usersTableInfo = sqlite.prepare("PRAGMA table_info(users)").all() as any[];
+  const hasEmailVerified = usersTableInfo.some((col: any) => col.name === 'email_verified');
+  
+  if (!hasEmailVerified) {
+    console.log('📦 Migrazione: aggiunta campi verifica email...');
+    sqlite.exec(`
+      ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0;
+      ALTER TABLE users ADD COLUMN verification_token TEXT;
+      ALTER TABLE users ADD COLUMN verification_expires INTEGER;
+    `);
+    // Imposta tutti gli utenti esistenti come verificati (per non bloccarli)
+    sqlite.exec(`UPDATE users SET email_verified = 1 WHERE email_verified IS NULL OR email_verified = 0`);
+    console.log('✅ Campi verifica email aggiunti');
+  }
+
+  // Migrazione: aggiungi campi reset password se non esistono
+  const usersTableInfo2 = sqlite.prepare("PRAGMA table_info(users)").all() as any[];
+  const hasResetToken = usersTableInfo2.some((col: any) => col.name === 'reset_token');
+  
+  if (!hasResetToken) {
+    console.log('📦 Migrazione: aggiunta campi reset password...');
+    sqlite.exec(`
+      ALTER TABLE users ADD COLUMN reset_token TEXT;
+      ALTER TABLE users ADD COLUMN reset_expires INTEGER;
+    `);
+    console.log('✅ Campi reset password aggiunti');
+  }
 
   // Inserisci categorie predefinite se non esistono
   const existingCategories = db.select().from(schema.categories).all();

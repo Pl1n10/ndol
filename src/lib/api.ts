@@ -3,11 +3,17 @@ import type { Category, Subscription, NewSubscription, Alternative, Stats, Setti
 
 const API_BASE = '/api';
 
+function getAuthHeaders(): HeadersInit {
+  const token = localStorage.getItem('ndol_token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...getAuthHeaders(),
       ...options?.headers,
     },
   });

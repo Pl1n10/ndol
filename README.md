@@ -1,11 +1,12 @@
 # ndol - New Deal Or Leave 💪
 
-> Gestore di subscription open source. Tieni traccia delle tue subscription, ricevi promemoria prima delle scadenze, negozia nuovi deal o vai via.
+> Gestore di subscription open source multi-utente. Tieni traccia delle tue subscription, ricevi promemoria prima delle scadenze, negozia nuovi deal o vai via.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
 ## 🎯 Cosa fa
 
+- **Multi-utente**: Registrazione e login con autenticazione JWT
 - **Traccia subscription e utenze**: Netflix, Spotify, telefono, luce, gas, assicurazioni...
 - **Promemoria automatici**: Ricevi email X giorni prima di ogni rinnovo
 - **Statistiche**: Vedi quanto spendi al mese e all'anno
@@ -73,6 +74,16 @@ Per cambiare la posizione, imposta la variabile d'ambiente:
 NDOL_DATA_DIR=/path/to/data npm start
 ```
 
+### Sicurezza JWT
+
+In produzione, imposta un secret JWT personalizzato:
+
+```bash
+JWT_SECRET=il-tuo-secret-molto-lungo-e-sicuro npm start
+```
+
+Se non impostato, viene generato un secret casuale ad ogni avvio (gli utenti dovranno riloggarsi).
+
 ## 📁 Struttura progetto
 
 ```
@@ -119,10 +130,11 @@ Puoi aggiungere categorie custom nelle Impostazioni.
 
 ## 🗓️ Roadmap
 
+- [x] Multi-utente / Autenticazione JWT
 - [ ] Import automatico da estratto conto
 - [ ] Notifiche push browser
 - [ ] Database condiviso di deals della community
-- [ ] Multi-utente / SaaS
+- [ ] Hosting SaaS gestito
 - [ ] Integrazione con comparatori (SosTariffe, Segugio...)
 - [ ] Mobile app nativa
 

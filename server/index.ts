@@ -5,13 +5,176 @@ import cron from 'node-cron';
 import { db, initializeDatabase } from './db/index.js';
 import * as schema from './db/schema.js';
 import { eq, lte, and } from 'drizzle-orm';
-import { sendReminderEmail, testEmailConnection } from './email.js';
+import { sendReminderEmail, testEmailConnection, sendVerificationEmail, sendPasswordResetEmail } from './email.js';
+import { authMiddleware, createUser, authenticateUser, verifyEmail, resendVerificationEmail, requestPasswordReset, verifyResetToken, resetPassword, type AuthRequest } from './auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const BASE_URL = process.env.BASE_URL || `http://localhost:5173`;
 
 app.use(cors());
 app.use(express.json());
+
+// ============ AUTH API ============
+
+// Registrazione
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email e password sono obbligatori' });
+    }
+    
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'La password deve essere almeno 6 caratteri' });
+    }
+
+    const user = await createUser(email, password, name);
+    
+    // Invia email di verifica
+    const emailResult = await sendVerificationEmail(user.email, user.verificationToken!, BASE_URL);
+    
+    if (!emailResult.success) {
+      console.error('Errore invio email verifica:', emailResult.error);
+      // L'utente è stato creato ma l'email non è partita
+      // Può usare resend-verification
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'Registrazione completata! Controlla la tua email per verificare l\'account.',
+      emailSent: emailResult.success,
+    });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Errore nella registrazione' });
+  }
+});
+
+// Verifica email
+app.get('/api/auth/verify-email', async (req, res) => {
+  try {
+    const { token } = req.query;
+    
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'Token mancante' });
+    }
+
+    const result = await verifyEmail(token);
+    res.json({ success: true, message: 'Email verificata con successo!' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Errore nella verifica' });
+  }
+});
+
+// Reinvia email di verifica
+app.post('/api/auth/resend-verification', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email obbligatoria' });
+    }
+
+    const result = await resendVerificationEmail(email);
+    const emailResult = await sendVerificationEmail(result.email, result.verificationToken, BASE_URL);
+    
+    if (!emailResult.success) {
+      return res.status(500).json({ error: 'Errore invio email. Riprova più tardi.' });
+    }
+    
+    res.json({ success: true, message: 'Email di verifica inviata!' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Errore' });
+  }
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email e password sono obbligatori' });
+    }
+
+    const result = await authenticateUser(email, password);
+    res.json(result);
+  } catch (error: any) {
+    res.status(401).json({ error: error.message || 'Credenziali non valide' });
+  }
+});
+
+// Verifica token / Get utente corrente
+app.get('/api/auth/me', authMiddleware, (req: AuthRequest, res) => {
+  res.json({ user: req.user });
+});
+
+// Richiedi reset password
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email obbligatoria' });
+    }
+
+    const result = await requestPasswordReset(email);
+    
+    // Invia email solo se l'utente esiste
+    if (result.hasUser && result.resetToken) {
+      const emailResult = await sendPasswordResetEmail(result.email!, result.resetToken, BASE_URL);
+      
+      if (!emailResult.success) {
+        console.error('Errore invio email reset:', emailResult.error);
+      }
+    }
+    
+    // Rispondi sempre con successo per non rivelare se l'email esiste
+    res.json({ 
+      success: true, 
+      message: 'Se l\'email è registrata, riceverai un link per reimpostare la password.' 
+    });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Errore' });
+  }
+});
+
+// Verifica token reset (per mostrare il form)
+app.get('/api/auth/verify-reset-token', async (req, res) => {
+  try {
+    const { token } = req.query;
+    
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'Token mancante' });
+    }
+
+    const result = await verifyResetToken(token);
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Token non valido' });
+  }
+});
+
+// Esegui reset password
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, password } = req.body;
+    
+    if (!token || !password) {
+      return res.status(400).json({ error: 'Token e password sono obbligatori' });
+    }
+    
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'La password deve essere almeno 6 caratteri' });
+    }
+
+    await resetPassword(token, password);
+    res.json({ success: true, message: 'Password reimpostata con successo!' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Errore nel reset password' });
+  }
+});
 
 // ============ CATEGORIES API ============
 
@@ -70,10 +233,13 @@ app.delete('/api/categories/:id', (req, res) => {
 
 // ============ SUBSCRIPTIONS API ============
 
-// Get tutte le subscription
-app.get('/api/subscriptions', (req, res) => {
+// Get tutte le subscription dell'utente
+app.get('/api/subscriptions', authMiddleware, (req: AuthRequest, res) => {
   try {
-    const subscriptions = db.select().from(schema.subscriptions).all();
+    const subscriptions = db.select()
+      .from(schema.subscriptions)
+      .where(eq(schema.subscriptions.userId, req.user!.id))
+      .all();
     res.json(subscriptions);
   } catch (error) {
     res.status(500).json({ error: 'Errore nel recupero subscription' });
@@ -81,11 +247,16 @@ app.get('/api/subscriptions', (req, res) => {
 });
 
 // Get singola subscription
-app.get('/api/subscriptions/:id', (req, res) => {
+app.get('/api/subscriptions/:id', authMiddleware, (req: AuthRequest, res) => {
   try {
     const subscription = db.select()
       .from(schema.subscriptions)
-      .where(eq(schema.subscriptions.id, req.params.id))
+      .where(
+        and(
+          eq(schema.subscriptions.id, req.params.id),
+          eq(schema.subscriptions.userId, req.user!.id)
+        )
+      )
       .get();
     
     if (!subscription) {
@@ -99,13 +270,14 @@ app.get('/api/subscriptions/:id', (req, res) => {
 });
 
 // Crea subscription
-app.post('/api/subscriptions', (req, res) => {
+app.post('/api/subscriptions', authMiddleware, (req: AuthRequest, res) => {
   try {
     const data = req.body;
     const id = crypto.randomUUID();
     
     db.insert(schema.subscriptions).values({
       id,
+      userId: req.user!.id,
       name: data.name,
       description: data.description,
       categoryId: data.categoryId,
@@ -135,10 +307,23 @@ app.post('/api/subscriptions', (req, res) => {
 });
 
 // Aggiorna subscription
-app.put('/api/subscriptions/:id', (req, res) => {
+app.put('/api/subscriptions/:id', authMiddleware, (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const data = req.body;
+    
+    // Verifica che la subscription appartenga all'utente
+    const existing = db.select()
+      .from(schema.subscriptions)
+      .where(and(
+        eq(schema.subscriptions.id, id),
+        eq(schema.subscriptions.userId, req.user!.id)
+      ))
+      .get();
+    
+    if (!existing) {
+      return res.status(404).json({ error: 'Subscription non trovata' });
+    }
     
     db.update(schema.subscriptions)
       .set({
@@ -170,8 +355,21 @@ app.put('/api/subscriptions/:id', (req, res) => {
 });
 
 // Elimina subscription
-app.delete('/api/subscriptions/:id', (req, res) => {
+app.delete('/api/subscriptions/:id', authMiddleware, (req: AuthRequest, res) => {
   try {
+    // Verifica che la subscription appartenga all'utente
+    const existing = db.select()
+      .from(schema.subscriptions)
+      .where(and(
+        eq(schema.subscriptions.id, req.params.id),
+        eq(schema.subscriptions.userId, req.user!.id)
+      ))
+      .get();
+    
+    if (!existing) {
+      return res.status(404).json({ error: 'Subscription non trovata' });
+    }
+    
     db.delete(schema.subscriptions).where(eq(schema.subscriptions.id, req.params.id)).run();
     res.json({ success: true });
   } catch (error) {
@@ -223,8 +421,21 @@ app.post('/api/settings/test-email', async (req, res) => {
 
 // ============ ALTERNATIVES API ============
 
-app.get('/api/subscriptions/:id/alternatives', (req, res) => {
+app.get('/api/subscriptions/:id/alternatives', authMiddleware, (req: AuthRequest, res) => {
   try {
+    // Verifica che la subscription appartenga all'utente
+    const subscription = db.select()
+      .from(schema.subscriptions)
+      .where(and(
+        eq(schema.subscriptions.id, req.params.id),
+        eq(schema.subscriptions.userId, req.user!.id)
+      ))
+      .get();
+    
+    if (!subscription) {
+      return res.status(404).json({ error: 'Subscription non trovata' });
+    }
+    
     const alternatives = db.select()
       .from(schema.alternatives)
       .where(eq(schema.alternatives.subscriptionId, req.params.id))
@@ -235,9 +446,23 @@ app.get('/api/subscriptions/:id/alternatives', (req, res) => {
   }
 });
 
-app.post('/api/subscriptions/:id/alternatives', (req, res) => {
+app.post('/api/subscriptions/:id/alternatives', authMiddleware, (req: AuthRequest, res) => {
   try {
     const { id: subscriptionId } = req.params;
+    
+    // Verifica che la subscription appartenga all'utente
+    const subscription = db.select()
+      .from(schema.subscriptions)
+      .where(and(
+        eq(schema.subscriptions.id, subscriptionId),
+        eq(schema.subscriptions.userId, req.user!.id)
+      ))
+      .get();
+    
+    if (!subscription) {
+      return res.status(404).json({ error: 'Subscription non trovata' });
+    }
+    
     const data = req.body;
     const id = crypto.randomUUID();
     
@@ -259,8 +484,28 @@ app.post('/api/subscriptions/:id/alternatives', (req, res) => {
   }
 });
 
-app.delete('/api/alternatives/:id', (req, res) => {
+app.delete('/api/alternatives/:id', authMiddleware, (req: AuthRequest, res) => {
   try {
+    // Verifica che l'alternativa appartenga a una subscription dell'utente
+    const alternative = db.select()
+      .from(schema.alternatives)
+      .where(eq(schema.alternatives.id, req.params.id))
+      .get();
+    
+    if (alternative) {
+      const subscription = db.select()
+        .from(schema.subscriptions)
+        .where(and(
+          eq(schema.subscriptions.id, alternative.subscriptionId!),
+          eq(schema.subscriptions.userId, req.user!.id)
+        ))
+        .get();
+      
+      if (!subscription) {
+        return res.status(404).json({ error: 'Non autorizzato' });
+      }
+    }
+    
     db.delete(schema.alternatives).where(eq(schema.alternatives.id, req.params.id)).run();
     res.json({ success: true });
   } catch (error) {
@@ -270,9 +515,12 @@ app.delete('/api/alternatives/:id', (req, res) => {
 
 // ============ STATS API ============
 
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', authMiddleware, (req: AuthRequest, res) => {
   try {
-    const subscriptions = db.select().from(schema.subscriptions).all();
+    const subscriptions = db.select()
+      .from(schema.subscriptions)
+      .where(eq(schema.subscriptions.userId, req.user!.id))
+      .all();
     const active = subscriptions.filter(s => s.status === 'active');
     
     // Calcola spesa mensile totale

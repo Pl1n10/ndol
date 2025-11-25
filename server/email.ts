@@ -156,3 +156,203 @@ function getBillingCycleLabel(cycle: string): string {
   };
   return labels[cycle] || cycle;
 }
+
+// ============ EMAIL DI VERIFICA ============
+
+export async function sendVerificationEmail(
+  email: string, 
+  token: string, 
+  baseUrl: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { db } = await import('./db/index.js');
+    const { settings } = await import('./db/schema.js');
+    
+    const settingsRows = db.select().from(settings).all();
+    const settingsObj = settingsRows.reduce((acc, s) => ({ ...acc, [s.key]: s.value }), {} as EmailSettings);
+    
+    if (!settingsObj.smtpHost) {
+      return { success: false, error: 'SMTP non configurato. Contatta l\'amministratore.' };
+    }
+    
+    const transporter = createTransporter(settingsObj);
+    const verifyUrl = `${baseUrl}/verify?token=${token}`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center; }
+          .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; text-align: center; }
+          .cta { display: inline-block; background: #667eea; color: white; padding: 16px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; margin: 20px 0; }
+          .cta:hover { background: #5a67d8; }
+          .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+          .link { word-break: break-all; color: #667eea; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1 style="margin: 0;">✉️ Verifica la tua email</h1>
+            <p style="margin: 10px 0 0 0; opacity: 0.9;">ndol - New Deal Or Leave</p>
+          </div>
+          <div class="content">
+            <h2>Benvenuto su ndol!</h2>
+            <p>Clicca il bottone qui sotto per verificare il tuo indirizzo email e attivare il tuo account.</p>
+            
+            <a href="${verifyUrl}" class="cta">✅ Verifica Email</a>
+            
+            <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
+              Se il bottone non funziona, copia e incolla questo link nel browser:
+            </p>
+            <p class="link">${verifyUrl}</p>
+            
+            <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
+              ⏰ Questo link scade tra 24 ore.
+            </p>
+          </div>
+          <div class="footer">
+            <p>Se non hai richiesto questa email, puoi ignorarla.</p>
+            <p>ndol - New Deal Or Leave 💪</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const text = `
+Verifica la tua email - ndol
+
+Benvenuto su ndol!
+
+Clicca il link qui sotto per verificare il tuo indirizzo email e attivare il tuo account:
+
+${verifyUrl}
+
+Questo link scade tra 24 ore.
+
+Se non hai richiesto questa email, puoi ignorarla.
+
+--
+ndol - New Deal Or Leave
+    `;
+
+    await transporter.sendMail({
+      from: settingsObj.emailFrom,
+      to: email,
+      subject: '✉️ Verifica la tua email - ndol',
+      text,
+      html,
+    });
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Errore invio email verifica:', error);
+    return { success: false, error: String(error) };
+  }
+}
+
+// ============ EMAIL RESET PASSWORD ============
+
+export async function sendPasswordResetEmail(
+  email: string, 
+  token: string, 
+  baseUrl: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { db } = await import('./db/index.js');
+    const { settings } = await import('./db/schema.js');
+    
+    const settingsRows = db.select().from(settings).all();
+    const settingsObj = settingsRows.reduce((acc, s) => ({ ...acc, [s.key]: s.value }), {} as EmailSettings);
+    
+    if (!settingsObj.smtpHost) {
+      return { success: false, error: 'SMTP non configurato. Contatta l\'amministratore.' };
+    }
+    
+    const transporter = createTransporter(settingsObj);
+    const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center; }
+          .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; text-align: center; }
+          .cta { display: inline-block; background: #667eea; color: white; padding: 16px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; margin: 20px 0; }
+          .cta:hover { background: #5a67d8; }
+          .footer { text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px; }
+          .link { word-break: break-all; color: #667eea; font-size: 12px; }
+          .warning { background: #fef3c7; padding: 15px; border-radius: 8px; margin-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1 style="margin: 0;">🔐 Reset Password</h1>
+            <p style="margin: 10px 0 0 0; opacity: 0.9;">ndol - New Deal Or Leave</p>
+          </div>
+          <div class="content">
+            <h2>Hai richiesto un reset della password</h2>
+            <p>Clicca il bottone qui sotto per impostare una nuova password.</p>
+            
+            <a href="${resetUrl}" class="cta">🔑 Reimposta Password</a>
+            
+            <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
+              Se il bottone non funziona, copia e incolla questo link nel browser:
+            </p>
+            <p class="link">${resetUrl}</p>
+            
+            <div class="warning">
+              <p style="margin: 0; color: #92400e; font-size: 14px;">
+                ⏰ <strong>Questo link scade tra 1 ora.</strong><br>
+                Se non hai richiesto il reset, ignora questa email. La tua password non verrà modificata.
+              </p>
+            </div>
+          </div>
+          <div class="footer">
+            <p>Questa email è stata inviata perché qualcuno ha richiesto un reset password per questo account.</p>
+            <p>ndol - New Deal Or Leave 💪</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const text = `
+Reset Password - ndol
+
+Hai richiesto un reset della password.
+
+Clicca il link qui sotto per impostare una nuova password:
+
+${resetUrl}
+
+Questo link scade tra 1 ora.
+
+Se non hai richiesto il reset, ignora questa email. La tua password non verrà modificata.
+
+--
+ndol - New Deal Or Leave
+    `;
+
+    await transporter.sendMail({
+      from: settingsObj.emailFrom,
+      to: email,
+      subject: '🔐 Reset Password - ndol',
+      text,
+      html,
+    });
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Errore invio email reset password:', error);
+    return { success: false, error: String(error) };
+  }
+}
